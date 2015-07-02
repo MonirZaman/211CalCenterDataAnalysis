@@ -1,0 +1,175 @@
+---
+title: "preprocess211"
+author: "Monir Zaman"
+date: "Saturday, May 30, 2015"
+output: html_document
+---
+
+Alberta 211 call center dataset exploration
+
+```{r}
+dirName="C:\\Users\\Van\\Google Drive\\datathon\\211\\csv"
+fileName="211_2011_to_2014.csv"
+df211=read.csv(file.path(dirName,fileName),head=T)
+#head(df211)
+
+cityRec=table(df211$CityName)
+library(reshape2)
+cityRec=melt(cityRec)
+names(cityRec)=c("city","nCalls")
+cityRec=cityRec[cityRec$nCalls>1000,]
+#plot(cityRec$city,cityRec$nCalls)
+
+library(ggplot2)
+ggplot(data=cityRec,aes(x=city,y=nCalls))+geom_point()
+
+```
+
+
+
+```{r, echo=FALSE}
+CalgaryRec=df211[df211$CityName=="Calgary",]
+nrow(CalgaryRec)
+
+#for exporting purpose
+temp=cSplit(CalgaryRec, "CallDateAndTimeStart", " ")
+write.csv(temp,file=file.path(dirName,"211SplittedByDateAndTime.csv"),row.names=F)
+
+#preprocessing the Client.Concerns
+sRec=data.frame(CallDateAndTimeStart=CalgaryRec$CallDateAndTimeStart,Client.Concerns=CalgaryRec$Client.Concerns)
+library(splitstackshape)
+dtConcern=cSplit(sRec, "Client.Concerns", ";")
+#write.csv(dtConcern,file=file.path(dirName,"211F2011To2014dateTimeClientConcern.csv"))
+dtConcern=melt(dtConcern,id.vars=c("CallDateAndTimeStart"))
+
+
+
+#adate="2011-07-04 08:20:00"
+#stopifnot(nrow(dtConcern[dtConcern$CallDateAndTimeStart==adate,])==15)
+# adateDf=dtConcern[dtConcern$CallDateAndTimeStart==adate,]
+# adateDf=adateDf[complete.cases(adateDf$value),]
+
+#remove NA values from value field
+dtConcern=dtConcern[complete.cases(dtConcern$value),]
+splittedDateTimeConcerns=cSplit(dtConcern, "CallDateAndTimeStart", " ")
+names(splittedDateTimeConcerns)=c("variable","concern","date","timeOfDay")
+write.csv(splittedDateTimeConcerns,file=file.path(dirName,"splittedDateTimeConcerns.csv"),row.names=F)
+#splittedDateTimeConcerns=read.csv(file.path(dirName,"splittedDateTimeConcerns.csv"),head=T)
+splittedDateTimeConcerns$dateObj=as.Date(splittedDateTimeConcerns$date)
+splittedDateTimeConcerns=splittedDateTimeConcerns[splittedDateTimeConcerns$dateObj<as.Date("2014-01-01"),]
+
+summaryConcern=table(splittedDateTimeConcerns$concern)
+concernDf=melt(summaryConcern)
+g=ggplot(data=concernDf,aes(x=Var1,y=value))+geom_point()+theme(axis.text.x=element_text(angle=40,hjust=1,vjust=1.0))+xlab("Concerns")+ylab("Frequency")
+png(file.path(dirName,"concernsFrequency.png"))
+print(g)
+dev.off()
+
+# library(hash)
+# mpMu=hash()
+meanPerMonth=c("jan"=-7.1,"feb"=-5.4,"mar"=-1.6,"apr"=4.6,"may"=9.7,"jun"=13.7,"jul"=16.5,"aug"=15.8,"sep"=11.0,"oct"=5.2,"nov"=-2.4,"dec"=-6.8)
+
+sdev=c(4.5,3.6,3.5,1.7,1.6,1.1,1.4,1.5,2,1.8,3.6,4.4)
+
+weather2011="weather_data.cleaned/eng-daily-01012011-12312011.csv"
+weather2011=read.csv(file.path(dirName,weather2011),head=T)
+
+weather2012="weather_data.cleaned/eng-daily-01012012-12312012.csv"
+weather2012=read.csv(file.path(dirName,weather2012),head=T)
+
+weather2013="weather_data.cleaned/eng-daily-01012013-12312013.csv"
+weather2013=read.csv(file.path(dirName,weather2013),head=T)
+
+#weather2014="weather_data.cleaned/eng-daily-01012014-12312014.csv"
+#weather2014=read.csv(file.path(dirName,weather2014),head=T)
+weather=rbind(weather2011,weather2012,weather2013)
+stopifnot(nrow(weather)==(nrow(weather2011)+nrow(weather2012)+nrow(weather2013)))
+names(weather)[10]="meanTemp"
+
+#classify the weather of a date
+dtWeather=data.frame("variable"=c(),"concern"=c(),"date"=c(),"timeOfDay"=c(),"dateObj"=c(),"meanTemp"=c(),"Total.Precip..mm."=c(),"weatherType"=c())
+
+for(i in 1:nrow(splittedDateTimeConcerns)){
+  print(i)
+  print(nrow(splittedDateTimeConcerns))
+  arow=data.frame(splittedDateTimeConcerns[i,])
+  yr=substr(arow$date,0,4)
+  mon=substr(arow$date,6,7)
+  day=substr(arow$date,9,10)
+  
+  qdate=paste(day,mon,yr,sep="/")
+  rrow=weather[weather$Date.Time==qdate,]
+  meanTemp=unlist(rrow[["meanTemp"]])
+    
+  #calculate the warmness
+  mu=meanPerMonth[as.integer(mon)]
+  csd=sdev[as.integer(mon)]
+  cat("mu ",mu)
+  cat("csd ",csd)
+  print("meanTemp ")
+  print(meanTemp)
+  if(is.na(meanTemp)){
+    weatherType="Unknown"
+    next
+  }
+  else if(meanTemp>=(mu-csd)&meanTemp<=(mu+csd)){
+    weatherType="normal"
+  }
+  else{
+    if(meanTemp>(mu+csd)){#warm weather
+      if(meanTemp<=(mu+(2*csd))){
+        weatherType="warm"
+      }else if(meanTemp<=(mu+(3*csd))){
+        weatherType="warmer"
+      }else{
+        weatherType="ReallyWarm"
+      }
+    }
+  else{
+    #cold weather
+    if(meanTemp>=(mu-(2*csd))){
+      weatherType="cold"
+    }else if(meanTemp>=(mu-(3*csd))){
+      weatherType="colder"
+    }else{
+      weatherType="ReallyCold"
+    }
+  }
+  }#end of else
+  
+  arow$meanTemp=meanTemp
+  arow$totalPrecip=unlist(rrow["Total.Precip..mm."])
+  arow$weatherType=weatherType
+  #print(arow)
+  dtWeather=rbind(dtWeather,arow)
+  
+}
+
+png(file.path(dirName,"concernsWeather211.png"))
+ggplot(data=dtWeather,aes(x=factor(concern),fill=factor(weatherType)))+geom_bar(position = "fill")+coord_flip()+xlab("Client concerns")+ylab("Percentage")#+scale_fill_gradient(name="Weather type")
+dev.off()
+
+jpeg(file.path(dirName,"concernFreq211.jpeg"))
+ggplot(data=dtWeather,aes(x=factor(concern)))+geom_histogram(aes(fill=..count..))+xlab("Concerns")+ylab("Frequency")+coord_flip()#+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=1.0))
+dev.off()
+
+# > nrow(dt[is.na(dt$meanTemp),])
+# [1] 4156
+# > nrow(dt)
+# [1] 87748
+# > 
+
+library(plyr)
+sumdt=ddply(dtWeather,c("concern","weatherType"),summarise,frequency=length(concern))
+nrow(dtWeather[dtWeather$concern=="Addictions"&dtWeather$weatherType=="warm",])
+
+ggplot(data=sumdt,aes(x=concern,colour=weatherType,group=weatherType))+geom_density(fill=NA)+theme(axis.text.x=element_text(angle=40,hjust=1,vjust=1.0))
+
+ggplot(data=dtWeather,aes(x=concern))+geom_histogram()+theme(axis.text.x=element_text(angle=40,hjust=1,vjust=1.0))+facet_wrap(~weatherType)
+
+write.csv(dtWeather,file=file.path(dirName,"dtConcernTemprWtypePrecip.csv"),row.names=F)
+#dtWeather=read.csv(file.path(dirName,"dateTimeConcernTempr.csv"),head=T)
+
+
+```
+
